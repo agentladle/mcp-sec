@@ -1,0 +1,21 @@
+# Virtual environments
+.venv/
+.venv-*/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Data files
+data/
+
+# Build artifacts
+dist/
+*.egg-info/
+
+# PyPI credentials
+.pypirc
+
+# PyPI publish plan (internal doc)
+PyPI-*.md

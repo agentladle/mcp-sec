@@ -1,0 +1,52 @@
+[project]
+name = "agentladle-mcp-sec"
+dynamic = ["version"]
+description = "MCP server for SEC financial report download, parsing and search"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [
+    { name = "AgentLadle" },
+]
+keywords = ["mcp", "sec", "edgar", "financial-reports", "10-k", "10-q"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial",
+]
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    "httpx>=0.27.0",
+    "edgartools>=4.26.2",
+    "beautifulsoup4>=4.12.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+agentladle-mcp-sec = "mcp_sec.server:main"
+
+[project.urls]
+Homepage = "https://github.com/agentladle/mcp-sec"
+Repository = "https://github.com/agentladle/mcp-sec"
+Issues = "https://github.com/agentladle/mcp-sec/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+exclude = ["data/**"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_sec"]
+
+[tool.hatch.version]
+path = "src/mcp_sec/__init__.py"
