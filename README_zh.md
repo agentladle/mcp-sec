@@ -20,7 +20,7 @@
 ## 前置要求
 
 - **Python 3.10+** — [下载 Python](https://www.python.org/downloads/)
-- **uv** — [安装 uv](https://docs.astral.sh/uv/getting-started/install/)
+- **uv** — [安装 uv](https://docs.astral.sh/uv/getting-started/installation/)
 
 > **提示：** 安装 uv 后，请重启终端和 MCP 客户端（如 Cherry Studio），确保 `uv` 命令可被识别。
 

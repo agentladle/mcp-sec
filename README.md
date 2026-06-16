@@ -20,7 +20,7 @@ It enables AI assistants (Claude, Cursor, etc.) to access SEC EDGAR data through
 ## Prerequisites
 
 - **Python 3.10+** — [Download Python](https://www.python.org/downloads/)
-- **uv** — [Install uv](https://docs.astral.sh/uv/getting-started/install/)
+- **uv** — [Install uv](https://docs.astral.sh/uv/getting-started/installation/)
 
 > **Note:** After installing uv, restart your terminal and MCP client (e.g. Cherry Studio) to ensure the `uv` command is recognized.
 
