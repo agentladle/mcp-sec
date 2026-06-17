@@ -55,7 +55,7 @@ def main():
             "  ⚠️  WARNING: No email configured for SEC User-Agent.\n"
             "  ⚠️  The SEC requires a real email in the User-Agent header.\n"
             "  ⚠️  Using the default may result in your IP being blocked.\n"
-            "  ⚠️  Set SEC_EMAIL env var or edit ~/.mcp-sec/config.yaml to add your email.\n"
+            "  ⚠️  Set SEC_EMAIL env var or edit ~/.agentladle/mcp-sec/config.yaml to add your email.\n"
             "\n"
         )
         sys.stderr.flush()

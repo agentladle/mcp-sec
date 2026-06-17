@@ -1,0 +1,18 @@
+startCommand:
+  type: stdio
+configSchema:
+  type: object
+  required:
+    - SEC_EMAIL
+  properties:
+    SEC_EMAIL:
+      type: string
+      description: SEC requires a valid email in the User-Agent header. Using a fake email may result in an IP ban.
+commandFunction: |-
+  (config) => ({
+    command: 'uvx',
+    args: ['agentladle-mcp-sec'],
+    env: {
+      SEC_EMAIL: config.SEC_EMAIL
+    }
+  })

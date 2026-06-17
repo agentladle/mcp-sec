@@ -1,6 +1,6 @@
 # AgentLadle MCP SEC
 
-**English** | [中文](README_zh.md)
+**English** | [中文](README_zh.md) | 📺 [Watch Demo](https://www.youtube.com/watch?v=qZteRG7WvIQ)
 
 > 🇨🇳 **China A-Share Market** — Cloud-hosted MCP for Shanghai & Shenzhen listed companies. [Read more](Chinese-A-share-MCP-README.md) | [Get API Key](https://agentladle.com/register)
 
@@ -98,7 +98,7 @@ Replace `/path/to/mcp-sec` with the actual path to the cloned repository.
 ## Data Flow
 
 ```
-SEC EDGAR API                     Local Files (~/.mcp-sec/data/)
+SEC EDGAR API                     Local Files (~/.agentladle/mcp-sec/data/)
 ──────────────                    ──────────────────────────────
 company_tickers.json   ──→       company_tickers.json         (ticker→CIK mapping)
                                      │
@@ -189,16 +189,16 @@ Get the Table of Contents page(s). Searches the first 10 pages for "Table of Con
 
 ## Configuration
 
-On first run, a default config file is created at `~/.mcp-sec/config.yaml`:
+On first run, a default config file is created at `~/.agentladle/mcp-sec/config.yaml`:
 
 ```yaml
 sec:
   email: ""
 
 paths:
-  data_dir: "~/.mcp-sec/data"
-  html_dir: "~/.mcp-sec/data/html"
-  json_dir: "~/.mcp-sec/data/json"
+  data_dir: "~/.agentladle/mcp-sec/data"
+  html_dir: "~/.agentladle/mcp-sec/data/html"
+  json_dir: "~/.agentladle/mcp-sec/data/json"
 
 download:
   delay_between_requests: 0.2
@@ -208,7 +208,7 @@ download:
 The `email` field is used to build the SEC-compliant User-Agent header (`AgentLadleMcpSec {email}`). You can configure it in three ways (in order of priority):
 
 1. **Environment variable** `SEC_EMAIL` — recommended, set it in your MCP client JSON config
-2. **Config file** — edit `~/.mcp-sec/config.yaml` and set `email`
+2. **Config file** — edit `~/.agentladle/mcp-sec/config.yaml` and set `email`
 3. **Default** — if empty, a placeholder email is used (not recommended for production)
 
 > ⚠️ **SEC User-Agent Policy**: The SEC requires a real email in the User-Agent header. Using the default placeholder may result in your IP being blocked.
@@ -216,7 +216,7 @@ The `email` field is used to build the SEC-compliant User-Agent header (`AgentLa
 ## Data Directory Structure
 
 ```
-~/.mcp-sec/
+~/.agentladle/mcp-sec/
 ├── config.yaml                        # Configuration (auto-created)
 └── data/
     ├── company_tickers.json           # ticker→CIK mapping (auto-downloaded & cached)
@@ -250,7 +250,7 @@ User: "What is Tesla's 2024 revenue?"
    → Error: File not found.
    
 2. download_sec_report(ticker="TSLA", form="10-K", report_date="2024-12-31")
-   → Downloads HTML to ~/.mcp-sec/data/html/
+   → Downloads HTML to ~/.agentladle/mcp-sec/data/html/
    
 3. parse_sec_report(ticker="TSLA", form="10-K", report_date="2024-12-31")
    → Parses into JSON.
@@ -275,7 +275,7 @@ User: "What is Tesla's 2024 revenue?"
 src/mcp_sec/
 ├── __init__.py
 ├── server.py          # MCP Server entry point
-├── config.py          # Config loading (~/.mcp-sec/config.yaml, singleton cached)
+├── config.py          # Config loading (~/.agentladle/mcp-sec/config.yaml, singleton cached)
 ├── models.py          # Data models
 ├── tools/
 │   ├── list_filings.py # Tool 1: list_sec_filings

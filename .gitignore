@@ -19,3 +19,4 @@ dist/
 
 # PyPI publish plan (internal doc)
 PyPI-*.md
+VERSION_TRACKING.md

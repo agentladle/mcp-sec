@@ -1,6 +1,6 @@
 """
 Configuration loading module.
-Reads configuration from ~/.mcp-sec/config.yaml and provides default fallback values.
+Reads configuration from ~/.agentladle/mcp-sec/config.yaml and provides default fallback values.
 Automatically creates the default config file and data directories on first run.
 """
 
@@ -12,7 +12,7 @@ import yaml
 
 
 # ── Configuration directory constants ────────────────────────────────────────────
-CONFIG_DIR = Path.home() / ".mcp-sec"
+CONFIG_DIR = Path.home() / ".agentladle" / "mcp-sec"
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
 DATA_DIR = CONFIG_DIR / "data"
 
@@ -29,9 +29,9 @@ sec:
   email: ""
 
 paths:
-  data_dir: "~/.mcp-sec/data"
-  html_dir: "~/.mcp-sec/data/html"
-  json_dir: "~/.mcp-sec/data/json"
+  data_dir: "~/.agentladle/mcp-sec/data"
+  html_dir: "~/.agentladle/mcp-sec/data/html"
+  json_dir: "~/.agentladle/mcp-sec/data/json"
 
 download:
   delay_between_requests: 0.2
@@ -54,9 +54,9 @@ class SecConfig:
 
 @dataclass
 class PathsConfig:
-    data_dir: str = "~/.mcp-sec/data"
-    html_dir: str = "~/.mcp-sec/data/html"
-    json_dir: str = "~/.mcp-sec/data/json"
+    data_dir: str = "~/.agentladle/mcp-sec/data"
+    html_dir: str = "~/.agentladle/mcp-sec/data/html"
+    json_dir: str = "~/.agentladle/mcp-sec/data/json"
 
 
 @dataclass

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "name": "mcp-sec",
+  "description": "MCP server for SEC financial report download, parsing and search.",
+  "repository": "https://github.com/agentladle/mcp-sec",
+  "maintainers": [
+    "agentladle"
+  ]
+}
