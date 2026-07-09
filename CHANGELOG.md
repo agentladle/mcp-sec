@@ -11,8 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Environment | Current Version | Description |
 |-------------|-----------------|-------------|
-| TestPyPI    | `0.1.4`         | Testing environment |
-| PyPI        | `0.1.4`         | Production environment |
+| TestPyPI    | `0.1.5`         | Testing environment |
+| PyPI        | `0.1.5`         | Production environment |
 
 ## Release Workflow
 
@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
    - Production: `twine upload dist/*`
 
 ---
+
+## [0.1.5] - 2026-07-09
+
+### Added
+- Added HTM parsing support for Form 6-K filings.
+
+### Changed
+- Improved download/parse pipeline for HTML-based SEC exhibits.
 
 ## [0.1.4] - 2026-07-09
 
