@@ -35,11 +35,25 @@ class LocalSearcher:
 
     @staticmethod
     def find_html_file(html_dir: Path, ticker: str, form: str, report_date: str) -> Path | None:
-        """Locate the HTML file for a given report."""
+        """Locate the HTML file (or bundle primary) for a given report."""
         filename = LocalSearcher.build_filename(ticker, form, report_date)
+        # New bundle layout
+        primary = html_dir / filename / "primary.htm"
+        if primary.exists():
+            return primary
+        # Legacy flat file
         html_path = html_dir / f"{filename}.htm"
         if html_path.exists():
             return html_path
+        return None
+
+    @staticmethod
+    def find_filing_dir(html_dir: Path, ticker: str, form: str, report_date: str) -> Path | None:
+        """Locate the filing bundle directory if present."""
+        filename = LocalSearcher.build_filename(ticker, form, report_date)
+        filing_dir = html_dir / filename
+        if filing_dir.is_dir() and (filing_dir / "primary.htm").exists():
+            return filing_dir
         return None
 
     # ── JSON file reading ─────────────────────────────────────────

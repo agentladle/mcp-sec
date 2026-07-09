@@ -35,51 +35,153 @@ class ReportParser:
         """
         Parse a single HTML report file into page-split JSON.
         Idempotent: skips if JSON already exists.
-
-        Parsing flow:
-        1. edgartools mark_page_breaks() to mark page breaks
-        2. Replace page break markers with placeholders
-        3. edgartools parse_html() to parse the document node tree
-        4. Traverse nodes: tables kept as HTML, text to Markdown, lists to Markdown
-        5. Split by placeholders into page list
-        6. Deduplicate consecutive duplicate pages (preserve original page numbers)
-        7. Output JSON
         """
-        # Idempotent check
+        return self._parse_sources(
+            sources=[("primary", html_path.name, html_path)],
+            json_path=json_path,
+            document_name=html_path.name,
+        )
+
+    def parse_bundle(self, filing_dir: Path, json_path: Path) -> ParseResult:
+        """
+        Parse primary.htm + downloaded HTML exhibits in a filing directory,
+        merging them into one page-split JSON with section metadata.
+        """
+        primary = filing_dir / "primary.htm"
+        if not primary.exists():
+            # Backward compat: flat .htm next to dir name
+            flat = filing_dir.parent / f"{filing_dir.name}.htm"
+            if flat.exists():
+                return self.parse(flat, json_path)
+            return ParseResult(
+                success=False,
+                error=f"primary.htm not found in {filing_dir}",
+            )
+
+        sources: list[tuple[str, str, Path]] = [("primary", "Form primary", primary)]
+        exhibits_parsed = 0
+
+        manifest_path = filing_dir / "manifest.json"
+        exhibit_files: list[tuple[str, Path]] = []
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                for ex in manifest.get("exhibits_downloaded", []):
+                    name = ex.get("name") or ""
+                    path = filing_dir / Path(name).name
+                    if path.exists():
+                        exhibit_files.append((name, path))
+            except Exception as e:
+                logger.warning(f"Failed to read manifest.json: {e}")
+
+        # Fallback: any html/txt in dir except primary/manifest
+        if not exhibit_files:
+            for path in sorted(filing_dir.iterdir()):
+                if path.name.lower() in {"primary.htm", "manifest.json"}:
+                    continue
+                if path.suffix.lower() in {".htm", ".html", ".txt"}:
+                    exhibit_files.append((path.name, path))
+
+        for name, path in exhibit_files:
+            sources.append((Path(name).stem, name, path))
+            exhibits_parsed += 1
+
+        result = self._parse_sources(
+            sources=sources,
+            json_path=json_path,
+            document_name=filing_dir.name,
+        )
+        if result.success:
+            result.exhibits_parsed = exhibits_parsed
+        return result
+
+    def _parse_sources(
+        self,
+        sources: list[tuple[str, str, Path]],
+        json_path: Path,
+        document_name: str,
+    ) -> ParseResult:
+        """
+        Parse one or more HTML sources and merge into a single JSON document.
+        sources: list of (section_id, section_title, path)
+        """
+        # Idempotent check: if JSON exists and source mtimes are older, skip
         if json_path.exists():
             try:
                 data = json.loads(json_path.read_text(encoding="utf-8"))
-                page_count = len(data.get("pages", []))
-                return ParseResult(
-                    success=True,
-                    file_path=str(json_path),
-                    total_pages=page_count,
-                    file_size=json_path.stat().st_size,
-                    skipped=True,
+                json_mtime = json_path.stat().st_mtime
+                sources_newer = any(
+                    p.exists() and p.stat().st_mtime > json_mtime for _, _, p in sources
                 )
+                if not sources_newer:
+                    page_count = len(data.get("pages", []))
+                    return ParseResult(
+                        success=True,
+                        file_path=str(json_path),
+                        total_pages=page_count,
+                        file_size=json_path.stat().st_size,
+                        skipped=True,
+                        exhibits_parsed=max(0, len(sources) - 1),
+                    )
             except Exception:
-                pass  # JSON is corrupt, re-parse
+                pass
 
-        if not html_path.exists():
-            return ParseResult(
-                success=False,
-                error=f"HTML file does not exist: {html_path}",
-            )
+        for _, _, path in sources:
+            if not path.exists():
+                return ParseResult(
+                    success=False,
+                    error=f"HTML file does not exist: {path}",
+                )
 
         try:
-            html_content = html_path.read_text(encoding="utf-8", errors="replace")
-            mixed_content = self._html_to_mixed_markdown(html_content)
-            pages = self._split_into_pages(mixed_content)
-            pages = self._deduplicate_pages(pages)
+            all_pages: list[tuple[int, str]] = []
+            section_meta: list[dict] = []
+            page_offset = 0
 
-            sections = self._extract_sections(pages)
+            for section_id, section_title, path in sources:
+                html_content = path.read_text(encoding="utf-8", errors="replace")
+                # Plain .txt exhibits: wrap lightly so parser still works
+                if path.suffix.lower() == ".txt" and "<html" not in html_content.lower():
+                    html_content = f"<html><body><pre>{html_content}</pre></body></html>"
+
+                mixed_content = self._html_to_mixed_markdown(html_content)
+                pages = self._split_into_pages(mixed_content)
+                pages = self._deduplicate_pages(pages)
+
+                if not pages or (len(pages) == 1 and not pages[0][1].strip()):
+                    continue
+
+                start_page = page_offset + 1
+                renumbered = []
+                for i, (_, content) in enumerate(pages):
+                    renumbered.append((page_offset + i + 1, content))
+                end_page = renumbered[-1][0]
+                page_offset = end_page
+
+                section_meta.append({
+                    "id": section_id,
+                    "title": section_title,
+                    "page_start": start_page,
+                    "page_end": end_page,
+                    "source_file": path.name,
+                })
+
+                # Keep Item/Part extraction within this section's pages
+                for item_sec in self._extract_sections(renumbered):
+                    item_sec["section_id"] = section_id
+                    section_meta.append(item_sec)
+
+                all_pages.extend(renumbered)
+
+            if not all_pages:
+                return ParseResult(success=False, error="No parseable content found")
 
             doc = {
-                "document_name": html_path.name,
-                "sections": sections,
+                "document_name": document_name,
+                "sections": section_meta,
                 "pages": [
                     {"page_number": page_num, "full_content": content}
-                    for page_num, content in pages
+                    for page_num, content in all_pages
                 ],
             }
 
@@ -92,12 +194,13 @@ class ReportParser:
             return ParseResult(
                 success=True,
                 file_path=str(json_path),
-                total_pages=len(pages),
+                total_pages=len(all_pages),
                 file_size=json_path.stat().st_size,
+                exhibits_parsed=max(0, len(sources) - 1),
             )
 
         except Exception as e:
-            logger.error(f"Parsing failed {html_path.name}: {e}")
+            logger.error(f"Parsing failed for {document_name}: {e}")
             return ParseResult(success=False, error=str(e))
 
     def _html_to_mixed_markdown(self, html: str) -> str:

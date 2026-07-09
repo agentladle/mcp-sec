@@ -2,25 +2,34 @@
 SEC EDGAR download service
 - ticker → CIK mapping (SEC company_tickers.json, auto-download + cache + refresh)
 - Query download URL for a specific report
-- Download HTML files (idempotent)
+- Download HTML files / filing bundles with HTML exhibits (idempotent)
 """
 
 import json
+import re
 import time
 import asyncio
 import logging
 from pathlib import Path
+from urllib.parse import unquote
 
 import httpx
 
 from mcp_sec.config import AppConfig
-from mcp_sec.models import DownloadResult
+from mcp_sec.models import DownloadResult, BundleDownloadResult
 
 logger = logging.getLogger(__name__)
 
 COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SUBMISSIONS_URL_TEMPLATE = "https://data.sec.gov/submissions/CIK{cik}.json"
 ARCHIVES_URL_TEMPLATE = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{primary_doc}"
+INDEX_JSON_URL_TEMPLATE = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/index.json"
+
+# Forms where exhibits usually carry the real content
+EXHIBIT_DEFAULT_FORMS = {"6-K", "8-K", "6-K/A", "8-K/A"}
+HTML_EXTS = {".htm", ".html", ".txt"}
+SKIP_EXTS = {".xml", ".xsd", ".zip", ".jpg", ".jpeg", ".png", ".gif", ".json", ".css", ".js"}
+PDF_EXTS = {".pdf"}
 
 
 class SECDownloader:
@@ -224,13 +233,14 @@ class SECDownloader:
             self._failed_tickers.add(ticker)
         return result
 
-    # ── Query report URL ──────────────────────────────────────────
+    # ── Query report URL / filing meta ────────────────────────────
 
-    async def fetch_filing_url(self, cik: int, form: str, report_date: str) -> tuple[str, str] | None:
+    async def fetch_filing_meta(
+        self, cik: int, form: str, report_date: str
+    ) -> dict | None:
         """
-        Query the SEC submissions API for the download URL of a specific report.
-        Returns (url, actual_report_date) or None.
-        If report_date does not match exactly, returns None and logs available dates.
+        Resolve a filing match from the SEC submissions API.
+        Returns dict with: url, report_date, filing_date, accession, primary_doc, form
         """
         padded_cik = str(cik).zfill(10)
         url = SUBMISSIONS_URL_TEMPLATE.format(cik=padded_cik)
@@ -258,7 +268,6 @@ class SECDownloader:
 
         is_year_only = len(report_date) == 4 and report_date.isdigit()
 
-        # Match form + report_date (support year-only match against reportDate)
         for i, (f, rd) in enumerate(zip(forms, report_dates)):
             rd_str = str(rd) if rd else ""
 
@@ -269,16 +278,268 @@ class SECDownloader:
 
             if match:
                 fd_str = str(dates[i]) if dates[i] else ""
-                accession_no_dashes = accessions[i].replace("-", "")
+                accession = accessions[i]
+                accession_no_dashes = accession.replace("-", "")
+                primary_doc = primary_docs[i]
                 file_url = ARCHIVES_URL_TEMPLATE.format(
                     cik=cik,
                     accession=accession_no_dashes,
-                    primary_doc=primary_docs[i],
+                    primary_doc=primary_doc,
                 )
                 actual_date = rd_str if rd_str else fd_str
-                return file_url, actual_date
+                return {
+                    "url": file_url,
+                    "report_date": actual_date,
+                    "filing_date": fd_str,
+                    "accession": accession,
+                    "accession_nodash": accession_no_dashes,
+                    "primary_doc": primary_doc,
+                    "form": f,
+                    "cik": cik,
+                }
 
         return None
+
+    async def fetch_filing_url(self, cik: int, form: str, report_date: str) -> tuple[str, str] | None:
+        """
+        Query the SEC submissions API for the download URL of a specific report.
+        Returns (url, actual_report_date) or None.
+        """
+        meta = await self.fetch_filing_meta(cik, form, report_date)
+        if not meta:
+            return None
+        return meta["url"], meta["report_date"]
+
+    async def fetch_exhibit_list(self, cik: int, accession_nodash: str, primary_doc: str) -> list[dict]:
+        """
+        List non-primary files in a filing directory via index.json.
+        Returns list of {name, type, size}.
+        """
+        index_url = INDEX_JSON_URL_TEMPLATE.format(cik=cik, accession=accession_nodash)
+        try:
+            resp = await self._get_client().get(index_url, timeout=30)
+            resp.raise_for_status()
+            items = resp.json().get("directory", {}).get("item", [])
+        except Exception as e:
+            logger.warning(f"Failed to fetch filing index.json: {e}")
+            return []
+
+        primary_lower = (primary_doc or "").lower()
+        exhibits: list[dict] = []
+        for it in items:
+            name = it.get("name") or ""
+            if not name:
+                continue
+            low = name.lower()
+            if low == primary_lower or "index" in low:
+                continue
+            exhibits.append({
+                "name": name,
+                "type": it.get("type") or "",
+                "size": it.get("size") or "0",
+            })
+        return exhibits
+
+    @staticmethod
+    def _extract_exhibit_links_from_html(html: str, primary_doc: str) -> list[str]:
+        """Fallback: pull relative exhibit hrefs from the primary HTML."""
+        primary_lower = (primary_doc or "").lower()
+        names: list[str] = []
+        for match in re.finditer(r'href=["\']([^"\']+)["\']', html, flags=re.IGNORECASE):
+            href = unquote(match.group(1).strip())
+            if not href or href.startswith(("http://", "https://", "#", "mailto:")):
+                continue
+            # strip query/fragment and directories
+            href = href.split("?")[0].split("#")[0]
+            name = Path(href).name
+            low = name.lower()
+            if not low or low == primary_lower or "index" in low:
+                continue
+            if low not in {n.lower() for n in names}:
+                names.append(name)
+        return names
+
+    @staticmethod
+    def _classify_exhibit(name: str) -> tuple[str, str]:
+        """
+        Classify an exhibit file.
+        Returns (action, reason) where action is 'download' | 'skip'.
+        """
+        low = name.lower()
+        suffix = Path(low).suffix
+
+        # Full EDGAR submission package (duplicates primary + all exhibits)
+        # e.g. 0001104659-26-081265.txt
+        if re.fullmatch(r"\d{10}-\d{2}-\d{6}\.txt", low):
+            return "skip", "full_submission_txt"
+
+        if suffix in PDF_EXTS:
+            return "skip", "pdf_not_supported"
+        if suffix in SKIP_EXTS:
+            return "skip", f"unsupported_ext:{suffix}"
+        if suffix in {".htm", ".html"}:
+            return "download", "html"
+        # Only keep .txt when it looks like an exhibit, not the accession package
+        if suffix == ".txt":
+            if "ex" in low:
+                return "download", "txt_exhibit"
+            return "skip", "non_exhibit_txt"
+        if not suffix:
+            return "skip", "unknown_ext"
+        return "skip", f"unsupported_ext:{suffix}"
+
+    @staticmethod
+    def should_include_exhibits(form: str, include_exhibits: bool | None) -> bool:
+        if include_exhibits is not None:
+            return include_exhibits
+        return form.upper() in EXHIBIT_DEFAULT_FORMS
+
+    async def download_filing_bundle(
+        self,
+        cik: int,
+        form: str,
+        report_date: str,
+        filing_dir: Path,
+        include_exhibits: bool | None = None,
+    ) -> BundleDownloadResult:
+        """
+        Download primary HTML plus HTML exhibits into filing_dir.
+        Writes manifest.json. PDF exhibits are recorded as skipped (not downloaded).
+        """
+        meta = await self.fetch_filing_meta(cik, form, report_date)
+        if not meta:
+            return BundleDownloadResult(
+                success=False,
+                error=f"No {form} filing found for date '{report_date}'",
+            )
+
+        actual_date = meta["report_date"]
+        accession_nodash = meta["accession_nodash"]
+        primary_doc = meta["primary_doc"]
+        want_exhibits = self.should_include_exhibits(meta["form"], include_exhibits)
+
+        filing_dir.mkdir(parents=True, exist_ok=True)
+        primary_path = filing_dir / "primary.htm"
+        manifest_path = filing_dir / "manifest.json"
+
+        # Idempotent: if manifest + primary already valid, reuse
+        if manifest_path.exists() and primary_path.exists():
+            try:
+                existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if existing.get("accession") == meta["accession"] and primary_path.stat().st_size > 0:
+                    return BundleDownloadResult(
+                        success=True,
+                        filing_dir=str(filing_dir),
+                        report_date=actual_date,
+                        primary_path=str(primary_path),
+                        exhibits_downloaded=existing.get("exhibits_downloaded", []),
+                        exhibits_skipped=existing.get("exhibits_skipped", []),
+                        total_bytes=sum(
+                            (filing_dir / Path(e["name"]).name).stat().st_size
+                            for e in existing.get("exhibits_downloaded", [])
+                            if (filing_dir / Path(e["name"]).name).exists()
+                        ) + primary_path.stat().st_size,
+                        skipped=True,
+                    )
+            except Exception:
+                pass
+
+        # 1) Download primary
+        primary_result = await self.download_file(meta["url"], primary_path, min_size=0)
+        if not primary_result.success:
+            return BundleDownloadResult(
+                success=False,
+                error=f"Primary download failed: {primary_result.error}",
+            )
+
+        exhibits_downloaded: list[dict] = []
+        exhibits_skipped: list[dict] = []
+        total_bytes = primary_result.file_size
+
+        if want_exhibits:
+            # 2) Discover exhibits
+            index_items = await self.fetch_exhibit_list(cik, accession_nodash, primary_doc)
+            discovered_names = [it["name"] for it in index_items]
+
+            # Fallback: parse primary HTML links if index empty
+            if not discovered_names:
+                try:
+                    html = primary_path.read_text(encoding="utf-8", errors="replace")
+                    discovered_names = self._extract_exhibit_links_from_html(html, primary_doc)
+                except Exception as e:
+                    logger.warning(f"Failed to extract exhibit links from primary: {e}")
+
+            # Prefer EX-99* / *_ex* first, then other html
+            def _sort_key(n: str) -> tuple:
+                low = n.lower()
+                is_ex99 = 0 if ("ex99" in low or "ex-99" in low) else 1
+                is_ex = 0 if ("ex" in low) else 2
+                return (is_ex99, is_ex, low)
+
+            for name in sorted(set(discovered_names), key=_sort_key):
+                action, reason = self._classify_exhibit(name)
+                if action == "skip":
+                    exhibits_skipped.append({"name": name, "reason": reason})
+                    continue
+
+                local_name = Path(name).name
+                save_path = filing_dir / local_name
+                file_url = ARCHIVES_URL_TEMPLATE.format(
+                    cik=cik,
+                    accession=accession_nodash,
+                    primary_doc=name,
+                )
+                result = await self.download_file(file_url, save_path, min_size=0)
+                if result.success:
+                    exhibits_downloaded.append({
+                        "name": local_name,
+                        "source_name": name,
+                        "reason": reason,
+                        "bytes": result.file_size,
+                    })
+                    total_bytes += result.file_size
+                else:
+                    exhibits_skipped.append({
+                        "name": name,
+                        "reason": f"download_failed:{result.error}",
+                    })
+
+        manifest = {
+            "ticker_form_date_hint": filing_dir.name,
+            "cik": cik,
+            "form": meta["form"],
+            "report_date": actual_date,
+            "filing_date": meta["filing_date"],
+            "accession": meta["accession"],
+            "primary_doc": primary_doc,
+            "primary": "primary.htm",
+            "include_exhibits": want_exhibits,
+            "exhibits_downloaded": exhibits_downloaded,
+            "exhibits_skipped": exhibits_skipped,
+        }
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        # Also keep a flat alias for backward compatibility with older tools
+        flat_alias = filing_dir.parent / f"{filing_dir.name}.htm"
+        try:
+            if not flat_alias.exists():
+                flat_alias.write_bytes(primary_path.read_bytes())
+        except Exception as e:
+            logger.warning(f"Failed to write flat primary alias: {e}")
+
+        return BundleDownloadResult(
+            success=True,
+            filing_dir=str(filing_dir),
+            report_date=actual_date,
+            primary_path=str(primary_path),
+            exhibits_downloaded=exhibits_downloaded,
+            exhibits_skipped=exhibits_skipped,
+            total_bytes=total_bytes,
+            skipped=False,
+        )
 
     async def list_available_filings(
         self, cik: int, form: str | None = None, limit: int = 5
@@ -330,18 +591,39 @@ class SECDownloader:
 
     # ── Download file ──────────────────────────────────────────────
 
-    async def download_file(self, url: str, save_path: Path) -> DownloadResult:
+    async def download_file(
+        self, url: str, save_path: Path, min_size: int | None = None
+    ) -> DownloadResult:
         """
-        Download an HTML file. Idempotent: skips if file already exists and is valid.
-        Validates file content by checking for HTML markers in the file header.
+        Download a file. Idempotent: skips if file already exists and is valid.
+        For HTML, validates by checking for HTML markers in the file header.
+        min_size overrides config.download.min_file_size (use 0 for short 6-K/exhibits).
         """
-        # Idempotent check with HTML format validation
+        size_threshold = (
+            self.config.download.min_file_size if min_size is None else min_size
+        )
+
+        # Idempotent check
         if save_path.exists():
             size = save_path.stat().st_size
-            if size > self.config.download.min_file_size:
+            if size > size_threshold:
                 try:
                     head = save_path.read_bytes()[:1024].lower()
-                    if b"<html" in head or b"<!doctype" in head:
+                    # Accept HTML or plain text exhibits
+                    if (
+                        b"<html" in head
+                        or b"<!doctype" in head
+                        or b"<document>" in head
+                        or save_path.suffix.lower() == ".txt"
+                    ):
+                        return DownloadResult(
+                            success=True,
+                            file_path=str(save_path),
+                            file_size=size,
+                            skipped=True,
+                        )
+                    # Non-empty existing file with unknown markers: still skip re-download
+                    if size > 0 and min_size == 0:
                         return DownloadResult(
                             success=True,
                             file_path=str(save_path),

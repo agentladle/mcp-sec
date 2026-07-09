@@ -15,6 +15,19 @@ class DownloadResult:
 
 
 @dataclass
+class BundleDownloadResult:
+    success: bool
+    filing_dir: str = ""
+    report_date: str = ""
+    primary_path: str = ""
+    exhibits_downloaded: list = field(default_factory=list)
+    exhibits_skipped: list = field(default_factory=list)
+    total_bytes: int = 0
+    skipped: bool = False  # True when entire bundle already present
+    error: str = ""
+
+
+@dataclass
 class ParseResult:
     success: bool
     file_path: str = ""
@@ -22,6 +35,7 @@ class ParseResult:
     file_size: int = 0
     skipped: bool = False
     error: str = ""
+    exhibits_parsed: int = 0
 
 
 @dataclass

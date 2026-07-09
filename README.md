@@ -102,7 +102,7 @@ SEC EDGAR API                     Local Files (~/.agentladle/mcp-sec/data/)
 ──────────────                    ──────────────────────────────
 company_tickers.json   ──→       company_tickers.json         (ticker→CIK mapping)
                                      │
-SEC Submissions API    ──→        html/*.htm                  (Tool 2: download)
+SEC Submissions API    ──→        html/{TICKER_FORM_DATE}/    (Tool 2: primary + HTML exhibits)
                                      │
 edgartools parsing     ──→        json/*.json                 (Tool 3: parse, page-split)
                                      │
@@ -116,7 +116,7 @@ TOC lookup             ──→        table of contents           (Tool 6: get
 | # | Tool | Description |
 |---|------|-------------|
 | 1 | `list_sec_filings` | Discover available SEC filings for a company |
-| 2 | `download_sec_report` | Download a specific SEC filing as HTML |
+| 2 | `download_sec_report` | Download SEC filing; 6-K/8-K include HTML exhibits by default (PDF skipped) |
 | 3 | `parse_sec_report` | Parse HTML into page-split JSON using edgartools |
 | 4 | `keyword_search` | Full-text keyword search with TF relevance scoring |
 | 5 | `get_report_pages` | Read report content by page number range |
@@ -135,13 +135,14 @@ List available SEC filings for a company. Use this tool ONLY when the exact year
 
 ### Tool 2: `download_sec_report`
 
-Download a specific SEC filing from EDGAR. One filing per call. Idempotent (skips if file exists and is valid).
+Download a specific SEC filing from EDGAR. For **6-K/8-K**, also downloads **HTML exhibits** by default (PDF exhibits are skipped, not parsed). Idempotent.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `ticker` | string | ✅ | Stock ticker, e.g. `"AAPL"` |
-| `form` | string | ✅ | Filing type: `"10-K"`, `"10-Q"`, `"20-F"`, `"6-K"` |
+| `form` | string | ✅ | Filing type: `"10-K"`, `"10-Q"`, `"20-F"`, `"6-K"`, `"8-K"` |
 | `report_date` | string | ✅ | Report date (fiscal period end date), e.g. `"2025-01-31"` |
+| `include_exhibits` | bool | ❌ | Download HTML exhibits. Default: `true` for 6-K/8-K, otherwise `false`. PDFs are never parsed |
 
 ### Tool 3: `parse_sec_report`
 

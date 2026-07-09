@@ -11,13 +11,13 @@ from mcp_sec.response import success_response, skipped_response, error_response
 
 
 def register_parse_tool(mcp: FastMCP):
-    
+
     @mcp.tool()
     def parse_sec_report(ticker: str, form: str, report_date: str) -> str:
         """
-        Parse a downloaded HTML report into a page-split JSON file.
+        Parse a downloaded HTML report (and HTML exhibits, if present) into a page-split JSON file.
         Typically called immediately after download_sec_report completes.
-        
+
         <strategy>
         Invoke this tool ONLY under two specific system states:
         1. You have just successfully downloaded a new report using download_sec_report.
@@ -30,38 +30,41 @@ def register_parse_tool(mcp: FastMCP):
 
         Args:
             ticker: Stock ticker symbol, e.g. "AAPL"
-            form: Report type, e.g. "10-K", "10-Q"
+            form: Report type, e.g. "10-K", "10-Q", "6-K", "8-K"
             report_date: Report date (fiscal period end date), e.g. "2025-01-31"
         """
         config = load_config()
         parser = get_parser()
-        
-        # Locate file
+
         filename = LocalSearcher.build_filename(ticker, form, report_date)
-        html_path = config.html_dir_path / f"{filename}.htm"
+        filing_dir = config.html_dir_path / filename
+        flat_html = config.html_dir_path / f"{filename}.htm"
         json_path = config.json_dir_path / f"{filename}.json"
-        
-        if not html_path.exists():
+
+        if filing_dir.is_dir() and (filing_dir / "primary.htm").exists():
+            result = parser.parse_bundle(filing_dir, json_path)
+        elif flat_html.exists():
+            result = parser.parse(flat_html, json_path)
+        else:
             return error_response(
-                error=f"HTML file not found: {html_path.name}",
-                hint="Download the report first using download_sec_report."
+                error=f"HTML filing not found: {filename}/primary.htm or {filename}.htm",
+                hint="Download the report first using download_sec_report.",
             )
-            
-        # Parse
-        result = parser.parse(html_path, json_path)
-        
+
         if result.success:
             data = {
                 "filename": json_path.name,
                 "total_pages": result.total_pages,
                 "file_size_kb": round(result.file_size / 1024, 1),
+                "exhibits_parsed": result.exhibits_parsed,
             }
             if result.skipped:
                 return skipped_response(data=data)
-            else:
-                return success_response(
-                    data=data,
-                    hint="You can now use keyword_search, get_report_pages, or get_report_toc to explore this report."
-                )
-        else:
-            return error_response(error=f"Parsing failed: {result.error}")
+            return success_response(
+                data=data,
+                hint=(
+                    "You can now use keyword_search, get_report_pages, or "
+                    "get_report_toc to explore this report."
+                ),
+            )
+        return error_response(error=f"Parsing failed: {result.error}")
