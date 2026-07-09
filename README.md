@@ -121,6 +121,7 @@ TOC lookup             ──→        table of contents           (Tool 6: get
 | 4 | `keyword_search` | Full-text keyword search with TF relevance scoring |
 | 5 | `get_report_pages` | Read report content by page number range |
 | 6 | `get_report_toc` | Get the Table of Contents page(s) |
+| 7 | `lookup_ticker_cik` | **Diagnostic**: look up ticker→CIK mapping when CIK resolution fails |
 
 ### Tool 1: `list_sec_filings`
 
@@ -187,6 +188,15 @@ Get the Table of Contents page(s). Searches the first 10 pages for "Table of Con
 | `form` | string | ✅ | Filing type |
 | `report_date` | string | ✅ | Report date (fiscal period end date) |
 
+### Tool 7: `lookup_ticker_cik`
+
+Diagnostic tool: look up ticker→CIK mapping. Use only when `download_sec_report` / `list_sec_filings` returns `CIK not found` or `Ticker not found`. Bypasses the session failed-ticker cache and returns same-CIK alias tickers.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `ticker` | string | ✅ | Stock ticker, e.g. `"BABA"` |
+| `refresh` | bool | ❌ | Force re-download of `company_tickers.json` from SEC (default: `false`) |
+
 ## Configuration
 
 On first run, a default config file is created at `~/.agentladle/mcp-sec/config.yaml`:
@@ -211,7 +221,7 @@ The `email` field is used to build the SEC-compliant User-Agent header (`AgentLa
 2. **Config file** — edit `~/.agentladle/mcp-sec/config.yaml` and set `email`
 3. **Default** — if empty, a placeholder email is used (not recommended for production)
 
-> ⚠️ **SEC User-Agent Policy**: The SEC requires a real email in the User-Agent header. Using the default placeholder may result in your IP being blocked.
+> ⚠️ **SEC User-Agent Policy**: The SEC requires a real email in the User-Agent header. Using the default placeholder may result in your IP being blocked and can cause intermittent ticker→CIK lookup failures. `SEC_EMAIL` is required — please configure it.
 
 ## Data Directory Structure
 

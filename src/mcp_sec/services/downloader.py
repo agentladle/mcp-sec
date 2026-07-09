@@ -118,10 +118,80 @@ class SECDownloader:
             logger.error(f"Failed to download company_tickers.json: {e}")
             return {}
 
+    async def lookup_ticker(self, ticker: str, refresh: bool = False) -> dict:
+        """
+        Diagnostic ticker → CIK lookup that BYPASSES the session-level _failed_tickers
+        blacklist. Always reads from local cache (and optionally forces a SEC refresh).
+
+        Returns a dict with:
+          - ticker: queried ticker (uppercased)
+          - cik: resolved CIK (int) or None
+          - aliases: list of other tickers sharing the same CIK
+          - cache_source: "memory" | "file" | "refreshed" | "empty"
+          - in_failed_cache: bool — whether the ticker was in _failed_tickers before this call
+          - total_entries: number of entries in the loaded mapping
+        """
+        ticker = ticker.upper()
+        was_failed = ticker in self._failed_tickers
+
+        # Ensure in-memory cache is populated (do NOT short-circuit on _failed_tickers)
+        if self._tickers_cache is None:
+            self._tickers_cache = self._load_tickers_from_cache()
+
+        cache_source = "memory" if self._tickers_cache else "empty"
+
+        # Optional forced refresh from SEC
+        if refresh and self._can_download():
+            fresh = await self._download_company_tickers()
+            if fresh:
+                self._tickers_cache = fresh
+                cache_source = "refreshed"
+            # If refresh failed but we already have a cache, keep reporting prior source
+        elif not self._tickers_cache or ticker not in self._tickers_cache:
+            # Reload from file (cache may have been empty or stale on first load)
+            file_cache = self._load_tickers_from_cache()
+            if file_cache:
+                self._tickers_cache = file_cache
+                cache_source = "file"
+
+        mapping = self._tickers_cache or {}
+        cik = mapping.get(ticker)
+
+        # Find aliases: other tickers mapping to the same CIK
+        aliases: list[str] = []
+        if cik:
+            aliases = sorted(t for t, c in mapping.items() if c == cik and t != ticker)
+            # Self-heal: clear blacklist entry so subsequent resolve_cik calls succeed
+            self._failed_tickers.discard(ticker)
+
+        return {
+            "ticker": ticker,
+            "cik": cik,
+            "aliases": aliases,
+            "cache_source": cache_source,
+            "in_failed_cache": was_failed,
+            "total_entries": len(mapping),
+        }
+
+    def preload_tickers(self) -> int:
+        """
+        Eagerly load company_tickers.json into memory at startup.
+        Returns the number of entries loaded (0 if file missing / empty).
+        Does NOT blacklist any ticker on failure.
+        """
+        if self._tickers_cache is None:
+            self._tickers_cache = self._load_tickers_from_cache()
+        return len(self._tickers_cache) if self._tickers_cache else 0
+
     async def resolve_cik(self, ticker: str) -> int | None:
         """
         Resolve a ticker to its CIK.
         Lookup order: failed cache → in-memory cache → local file → re-download (with cooldown)
+
+        Negative-cache rule: only blacklist a ticker when the mapping cache is
+        successfully populated AND the ticker is confirmed absent.  An empty /
+        failed cache load must NOT cause a blacklist entry (avoids permanent
+        session-level false negatives).
         """
         ticker = ticker.upper()
 
@@ -133,8 +203,8 @@ class SECDownloader:
         if self._tickers_cache and ticker in self._tickers_cache:
             return self._tickers_cache[ticker]
 
-        # 2. Load from local file
-        if self._tickers_cache is None:
+        # 2. Load from local file when cache is missing or empty
+        if not self._tickers_cache:
             self._tickers_cache = self._load_tickers_from_cache()
             if ticker in self._tickers_cache:
                 return self._tickers_cache[ticker]
@@ -148,7 +218,9 @@ class SECDownloader:
                 self._tickers_cache = fresh_cache
 
         result = self._tickers_cache.get(ticker) if self._tickers_cache else None
-        if result is None:
+        # Only blacklist when the cache is populated (confirmed miss).
+        # An empty cache means load/refresh failed — do NOT blacklist.
+        if result is None and self._tickers_cache:
             self._failed_tickers.add(ticker)
         return result
 
